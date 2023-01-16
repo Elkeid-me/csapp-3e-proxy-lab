@@ -1,6 +1,8 @@
 /tiny
 /.proxy
 /.noproxy
+/.xmake
+/.vscode
 /build
 
 /Makefile

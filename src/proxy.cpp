@@ -14,6 +14,8 @@
 #include <sys/types.h>
 #include <thread>
 
+#define USE_CACHE
+
 constexpr std::string_view USER_AGENT{
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
     "Firefox/10.0.3"};
@@ -149,7 +151,7 @@ void do_http_proxy(int fd_to_client, char *buf, std::string_view host,
                    std::string_view port, std::string_view resource,
                    lab::rio::rio_t &rio)
 {
-
+#ifdef USE_CACHE
     std::string uri{host.data(), host.length()};
     uri += ':';
     uri += port;
@@ -163,6 +165,7 @@ void do_http_proxy(int fd_to_client, char *buf, std::string_view host,
         lab::rio::Rio_writen(fd_to_client, ptr.get(), size);
         return;
     }
+#endif
 
     int fd_to_server{lab::Open_clientfd(host.data(), port.data())};
     std::string tmp_head{"GET /"};
@@ -213,6 +216,7 @@ void do_http_proxy(int fd_to_client, char *buf, std::string_view host,
     }
     lab::rio::Rio_writen(fd_to_client, buf, n);
 
+#ifdef USE_CACHE
     if (n != lab::MAX_OBJECT_SIZE)
     {
         global_cache.add_cache(uri, buf, n);
@@ -220,6 +224,7 @@ void do_http_proxy(int fd_to_client, char *buf, std::string_view host,
         lab::Close(fd_to_server);
         return;
     }
+#endif
 
     while (true)
     {
