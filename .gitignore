@@ -1,0 +1,16 @@
+/tiny
+/.proxy
+/.noproxy
+/.xmake
+/.vscode
+/build
+/.cache
+
+/Makefile
+/proxy
+/driver.sh
+/nop-server.py
+/webdriver_test.py
+/README
+/.clang-format
+/compile_commands.json
