@@ -14,8 +14,6 @@ namespace lab
     constexpr std::size_t MAX_OBJECT_SIZE{102400}; // 100 KiB
     constexpr std::size_t MAX_CACHE_SIZE{1048576}; // 1 MiB
 
-    extern std::atomic<std::size_t> clock;
-
     struct cache_block
     {
         std::shared_ptr<char[]> ptr;
@@ -29,7 +27,8 @@ namespace lab
         std::unordered_map<std::string, cache_block> map;
         std::shared_mutex mtx;
 
-        std::atomic<std::size_t> cache_size{0};
+        std::size_t cache_size{0};
+        std::atomic_size_t clock{0};
 
         void delete_lru();
 

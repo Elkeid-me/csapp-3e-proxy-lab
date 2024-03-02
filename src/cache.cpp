@@ -7,8 +7,6 @@
 
 namespace lab
 {
-    std::atomic<std::size_t> clock{0};
-
     void cache::delete_lru()
     {
         using item_t = std::pair<std::string, cache_block>;

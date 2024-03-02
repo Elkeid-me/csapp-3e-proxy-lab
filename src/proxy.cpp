@@ -1,18 +1,17 @@
 #include "cache.hpp"
 #include "file_process.hpp"
-#include "rio.hpp"
 #include "socket.hpp"
 #include <csignal>
 #include <cstddef>
 #include <iostream>
+#include <ranges>
 #include <regex>
 #include <string>
 #include <string_view>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <thread>
-
-#define USE_CACHE
+#include <vector>
 
 constexpr std::string_view USER_AGENT{
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
@@ -86,70 +85,50 @@ parse_request_head(char *request_head, std::size_t length)
 void https_proxy_help_thread(int fd_to_client, int fd_to_server)
 {
     char buf[lab::MAX_OBJECT_SIZE];
-    ssize_t n;
     while (true)
     {
-        n = read(fd_to_client, buf, lab::MAX_OBJECT_SIZE);
-        if (n < 0)
-        {
-            lab::Close(fd_to_server);
+        ssize_t n{read(fd_to_client, buf, lab::MAX_OBJECT_SIZE)};
+        if (n <= 0 || file::robust_write(fd_to_server, buf, n) != n)
             return;
-        }
-        if (write(fd_to_server, buf, n) != n)
-        {
-            lab::Close(fd_to_server);
-            return;
-        }
     }
 }
 
-void do_https_proxy(int fd_to_client, char *buf, std::string_view host,
-                    std::string_view port,
-                    lab::rio::rio_t &rio)
+void do_https_proxy(file::fd_wrapper fd_to_client, char *buf,
+                    std::string_view host, std::string_view port)
 {
-    int fd_to_server{lab::Open_clientfd(host.data(), port.data())};
+    file::fd_wrapper fd_to_server{
+        net::open_client_fd(host.data(), port.data())};
 
-    ssize_t n;
+    if (fd_to_client.robust_write(ESTABLISHED.data(), ESTABLISHED.length()) < 0)
+        return;
+
+    std::jthread help_thd(https_proxy_help_thread, fd_to_client.get_fd(),
+                          fd_to_server.get_fd());
     while (true)
     {
-        n = rio.Rio_readlineb(buf, lab::MAX_OBJECT_SIZE);
-        if (n < 0)
-        {
-            lab::Close(fd_to_server);
+        ssize_t n{read(fd_to_server.get_fd(), buf, lab::MAX_OBJECT_SIZE)};
+        if (n <= 0 || fd_to_client.robust_write(buf, n) < 0)
             return;
-        }
-
-        if (buf[0] == '\r')
-            break;
     }
-
-    lab::rio::Rio_writen(fd_to_client, ESTABLISHED.data(),
-                         ESTABLISHED.length());
-
-    std::thread help_thd(https_proxy_help_thread, fd_to_client, fd_to_server);
-    help_thd.detach();
-    while (true)
-    {
-        n = read(fd_to_server, buf, lab::MAX_OBJECT_SIZE);
-        if (n < 0)
-        {
-            lab::Close(fd_to_server);
-            return;
-        }
-        if (write(fd_to_client, buf, n) != n)
-        {
-            lab::Close(fd_to_server);
-            return;
-        }
-    }
-    lab::Close(fd_to_server);
 }
 
-void do_http_proxy(int fd_to_client, char *buf, std::string_view host,
-                   std::string_view port, std::string_view resource,
-                   lab::rio::rio_t &rio)
+std::vector<std::string_view> split_sv(std::string_view sv)
 {
-#ifdef USE_CACHE
+    std::vector<std::string_view> v;
+    for (std::string_view::size_type i_0{0}, i_1{sv.find('\n', i_0 + 1)};
+         i_1 != std::string_view::npos; i_1 = sv.find('\n', i_0 + 1))
+    {
+        v.push_back({sv.data() + i_0, sv.data() + i_1 + 1});
+        i_0 = i_1;
+    }
+    return v;
+}
+
+void do_http_proxy(file::fd_wrapper fd_to_client,
+                   std::vector<std::string_view> sv_vec, char *buf,
+                   std::string_view host, std::string_view port,
+                   std::string_view resource)
+{
     std::string uri{host.data(), host.length()};
     uri += ':';
     uri += port;
@@ -160,16 +139,19 @@ void do_http_proxy(int fd_to_client, char *buf, std::string_view host,
 
     if (ptr != nullptr)
     {
-        lab::rio::Rio_writen(fd_to_client, ptr.get(), size);
+        ssize_t make_gcc_happy
+            [[maybe_unused]]{fd_to_client.robust_write(ptr.get(), size)};
         return;
     }
-#endif
 
-    int fd_to_server{lab::Open_clientfd(host.data(), port.data())};
+    file::fd_wrapper fd_to_server{
+        net::open_client_fd(host.data(), port.data())};
     std::string tmp_head{"GET /"};
     tmp_head += resource;
     tmp_head += " HTTP/1.0\r\n";
-    lab::rio::Rio_writen(fd_to_server, tmp_head.c_str(), tmp_head.length());
+
+    if (fd_to_server.robust_write(tmp_head.c_str(), tmp_head.length()) < 0)
+        return;
 
     tmp_head = "Host: ";
     tmp_head += host;
@@ -177,97 +159,68 @@ void do_http_proxy(int fd_to_client, char *buf, std::string_view host,
     tmp_head += port;
     tmp_head += "\r\n";
 
-    lab::rio::Rio_writen(fd_to_server, tmp_head.c_str(), tmp_head.length());
+    if (fd_to_server.robust_write(tmp_head.c_str(), tmp_head.length()) < 0 ||
+        fd_to_server.robust_write(USER_AGENT.data(), USER_AGENT.length()) < 0 ||
+        fd_to_server.robust_write(CONNECTION.data(), CONNECTION.length()) < 0 ||
+        fd_to_server.robust_write(PROXY_CONNECTION.data(),
+                                  PROXY_CONNECTION.length()) < 0)
+        return;
 
-    lab::rio::Rio_writen(fd_to_server, USER_AGENT.data(), USER_AGENT.length());
-    lab::rio::Rio_writen(fd_to_server, CONNECTION.data(), CONNECTION.length());
-    lab::rio::Rio_writen(fd_to_server, PROXY_CONNECTION.data(),
-                         PROXY_CONNECTION.length());
-
-    ssize_t n;
-    while (true)
+    for (auto sv : std::views::drop(sv_vec, 1))
     {
-        n = rio.Rio_readlineb(buf, lab::MAX_OBJECT_SIZE);
-
-        if (n < 0)
-        {
-            lab::Close(fd_to_server);
-            return;
-        }
-
-        std::string_view sv{buf, static_cast<std::size_t>(n)};
-
         if (!(sv.starts_with("Connection: ") || sv.starts_with("Host: ") ||
               sv.starts_with("Proxy-Connection: ") ||
               sv.starts_with("User-Agent: ")))
-            lab::rio::Rio_writen(fd_to_server, sv.data(), sv.length());
-
-        if (sv[0] == '\r')
-            break;
+        {
+            if (fd_to_server.robust_write(sv.data(), sv.length()) < 0)
+                return;
+        }
     }
 
-    n = lab::rio::Rio_readn(fd_to_server, buf, lab::MAX_OBJECT_SIZE);
-    if (n < 0)
-    {
-        lab::Close(fd_to_server);
+    ssize_t n{fd_to_server.robust_read(buf, lab::MAX_OBJECT_SIZE)};
+    if (n < 0 || fd_to_client.robust_write(buf, n) < 0)
         return;
-    }
-    lab::rio::Rio_writen(fd_to_client, buf, n);
-
-#ifdef USE_CACHE
     if (n != lab::MAX_OBJECT_SIZE)
     {
         global_cache.add_cache(uri, buf, n);
-
-        lab::Close(fd_to_server);
         return;
     }
-#endif
 
     while (true)
     {
-        n = lab::rio::Rio_readn(fd_to_server, buf, lab::MAX_OBJECT_SIZE);
-        if (n < 0)
-        {
-            lab::Close(fd_to_server);
+        ssize_t n{fd_to_server.robust_read(buf, lab::MAX_OBJECT_SIZE)};
+        if (n < 0 || fd_to_client.robust_write(buf, n) < 0)
             return;
-        }
-        lab::rio::Rio_writen(fd_to_client, buf, n);
-
         if (n != lab::MAX_OBJECT_SIZE)
             break;
     }
-    lab::Close(fd_to_server);
 }
 
-void proxy_thread_function(int fd_to_client)
+void proxy_thread_function(file::fd_wrapper fd_to_client)
 {
     char buf[lab::MAX_OBJECT_SIZE];
-
-    lab::rio::rio_t rio(fd_to_client);
-
-    ssize_t n{rio.Rio_readlineb(buf, lab::MAX_OBJECT_SIZE)};
-
-    if (n < 7 || n == lab::MAX_OBJECT_SIZE)
-    {
-        lab::Close(fd_to_client);
+    ssize_t n{read(fd_to_client.get_fd(), buf, lab::MAX_OBJECT_SIZE)};
+    if (n < 0)
         return;
-    }
+    std::vector<std::string_view> sv_vec{
+        split_sv({buf, static_cast<std::size_t>(n)})};
 
-    auto [type, host, port, resource]{parse_request_head(buf, n)};
+    if (sv_vec.empty() || sv_vec.front().length() < 7)
+        return;
+
+    auto [type, host, port,
+          resource]{parse_request_head(buf, sv_vec.front().length())};
 
     switch (type)
     {
     case connection_type::http:
-        do_http_proxy(fd_to_client, buf, host, port, resource, rio);
-        lab::Close(fd_to_client);
+        do_http_proxy(std::move(fd_to_client), std::move(sv_vec), buf, host,
+                      port, resource);
         return;
     case connection_type::https:
-        do_https_proxy(fd_to_client, buf, host, port, rio);
-        lab::Close(fd_to_client);
+        do_https_proxy(std::move(fd_to_client), buf, host, port);
         return;
     case connection_type::none:
-        lab::Close(fd_to_client);
         return;
     }
 }
@@ -281,17 +234,20 @@ int main(int argc, char *argv[])
         return 1;
     }
 
-    int listen_fd{lab::Open_listen_fd(argv[1])};
+    file::fd_wrapper listen_fd{net::open_listen_fd(argv[1])};
     while (true)
     {
         socklen_t client_len{sizeof(sockaddr_storage)};
         sockaddr_storage client_addr;
-        int fd_to_client{lab::Accept(listen_fd,
-                                     reinterpret_cast<sockaddr *>(&client_addr),
-                                     &client_len)};
-
-        std::thread new_thread(proxy_thread_function, fd_to_client);
-        new_thread.detach();
+        file::fd_wrapper fd_to_client{
+            accept(listen_fd.get_fd(),
+                   reinterpret_cast<sockaddr *>(&client_addr), &client_len)};
+        if (fd_to_client.valid())
+        {
+            std::thread new_thread(proxy_thread_function,
+                                   std::move(fd_to_client));
+            new_thread.detach();
+        }
     }
     return 0;
 }
