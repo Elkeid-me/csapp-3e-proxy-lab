@@ -5,7 +5,7 @@
 #include <mutex>
 #include <shared_mutex>
 
-namespace lab
+namespace cache
 {
     void cache::delete_lru()
     {

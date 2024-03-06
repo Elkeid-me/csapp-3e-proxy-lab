@@ -1,5 +1,5 @@
 #include "cache.hpp"
-#include "file_process.hpp"
+#include "file.hpp"
 #include "socket.hpp"
 #include <csignal>
 #include <cstddef>
@@ -12,6 +12,8 @@
 #include <sys/types.h>
 #include <thread>
 #include <vector>
+
+using std::literals::string_view_literals::operator""sv;
 
 constexpr std::string_view USER_AGENT{
     "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:10.0.3) Gecko/20120305 "
@@ -36,7 +38,7 @@ enum class connection_type
     none
 };
 
-lab::cache global_cache;
+cache::cache global_cache;
 
 std::tuple<connection_type, std::string_view, std::string_view,
            std::string_view>
@@ -84,10 +86,10 @@ parse_request_head(char *request_head, std::size_t length)
 
 void https_proxy_help_thread(int fd_to_client, int fd_to_server)
 {
-    char buf[lab::MAX_OBJECT_SIZE];
+    char buf[cache::MAX_OBJECT_SIZE];
     while (true)
     {
-        ssize_t n{read(fd_to_client, buf, lab::MAX_OBJECT_SIZE)};
+        ssize_t n{read(fd_to_client, buf, cache::MAX_OBJECT_SIZE)};
         if (n <= 0 || file::robust_write(fd_to_server, buf, n) != n)
             return;
     }
@@ -106,7 +108,7 @@ void do_https_proxy(file::fd_wrapper fd_to_client, char *buf,
                           fd_to_server.get_fd());
     while (true)
     {
-        ssize_t n{read(fd_to_server.get_fd(), buf, lab::MAX_OBJECT_SIZE)};
+        ssize_t n{read(fd_to_server.get_fd(), buf, cache::MAX_OBJECT_SIZE)};
         if (n <= 0 || fd_to_client.robust_write(buf, n) < 0)
             return;
     }
@@ -146,18 +148,18 @@ void do_http_proxy(file::fd_wrapper fd_to_client,
 
     file::fd_wrapper fd_to_server{
         net::open_client_fd(host.data(), port.data())};
-    std::string tmp_head{"GET /"};
+    std::string tmp_head{"GET /"sv};
     tmp_head += resource;
-    tmp_head += " HTTP/1.0\r\n";
+    tmp_head += " HTTP/1.0\r\n"sv;
 
     if (fd_to_server.robust_write(tmp_head.c_str(), tmp_head.length()) < 0)
         return;
 
-    tmp_head = "Host: ";
+    tmp_head = "Host: "sv;
     tmp_head += host;
     tmp_head += ':';
     tmp_head += port;
-    tmp_head += "\r\n";
+    tmp_head += "\r\n"sv;
 
     if (fd_to_server.robust_write(tmp_head.c_str(), tmp_head.length()) < 0 ||
         fd_to_server.robust_write(USER_AGENT.data(), USER_AGENT.length()) < 0 ||
@@ -168,19 +170,19 @@ void do_http_proxy(file::fd_wrapper fd_to_client,
 
     for (auto sv : std::views::drop(sv_vec, 1))
     {
-        if (!(sv.starts_with("Connection: ") || sv.starts_with("Host: ") ||
-              sv.starts_with("Proxy-Connection: ") ||
-              sv.starts_with("User-Agent: ")))
+        if (!(sv.starts_with("Connection: "sv) || sv.starts_with("Host: "sv) ||
+              sv.starts_with("Proxy-Connection: "sv) ||
+              sv.starts_with("User-Agent: "sv)))
         {
             if (fd_to_server.robust_write(sv.data(), sv.length()) < 0)
                 return;
         }
     }
 
-    ssize_t n{fd_to_server.robust_read(buf, lab::MAX_OBJECT_SIZE)};
+    ssize_t n{fd_to_server.robust_read(buf, cache::MAX_OBJECT_SIZE)};
     if (n < 0 || fd_to_client.robust_write(buf, n) < 0)
         return;
-    if (n != lab::MAX_OBJECT_SIZE)
+    if (n != cache::MAX_OBJECT_SIZE)
     {
         global_cache.add_cache(uri, buf, n);
         return;
@@ -188,18 +190,18 @@ void do_http_proxy(file::fd_wrapper fd_to_client,
 
     while (true)
     {
-        ssize_t n{fd_to_server.robust_read(buf, lab::MAX_OBJECT_SIZE)};
+        ssize_t n{fd_to_server.robust_read(buf, cache::MAX_OBJECT_SIZE)};
         if (n < 0 || fd_to_client.robust_write(buf, n) < 0)
             return;
-        if (n != lab::MAX_OBJECT_SIZE)
+        if (n != cache::MAX_OBJECT_SIZE)
             break;
     }
 }
 
 void proxy_thread_function(file::fd_wrapper fd_to_client)
 {
-    char buf[lab::MAX_OBJECT_SIZE];
-    ssize_t n{read(fd_to_client.get_fd(), buf, lab::MAX_OBJECT_SIZE)};
+    char buf[cache::MAX_OBJECT_SIZE];
+    ssize_t n{read(fd_to_client.get_fd(), buf, cache::MAX_OBJECT_SIZE)};
     if (n < 0)
         return;
     std::vector<std::string_view> sv_vec{

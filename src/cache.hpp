@@ -9,7 +9,7 @@
 #include <unordered_map>
 #include <utility>
 
-namespace lab
+namespace cache
 {
     constexpr std::size_t MAX_OBJECT_SIZE{102400}; // 100 KiB
     constexpr std::size_t MAX_CACHE_SIZE{1048576}; // 1 MiB
