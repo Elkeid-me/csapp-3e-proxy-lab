@@ -10,11 +10,9 @@ namespace cache
     void cache::delete_lru()
     {
         using item_t = std::pair<std::string, cache_block>;
-        if (auto it{std::min_element(map.begin(), map.end(),
-                                     [](const item_t &lhs, const item_t &rhs) {
-                                         return lhs.second.stamp <
-                                                rhs.second.stamp;
-                                     })};
+        if (auto it{std::min_element(
+                map.begin(), map.end(), [](const item_t &lhs, const item_t &rhs)
+                { return lhs.second.stamp < rhs.second.stamp; })};
             it != map.end())
         {
             cache_size -= MAX_OBJECT_SIZE;
@@ -26,7 +24,8 @@ namespace cache
                           std::size_t size)
     {
         // glibc 似乎不支持 C++ 20 的 std::make_shared<T[]>() （悲
-        std::shared_ptr<char[]> ptr{new char[size], [](auto p) { delete[] p; }};
+        std::shared_ptr<char[]> ptr{new char[size],
+                                    [](char *p) { delete[] p; }};
         std::memcpy(ptr.get(), buf, size);
         std::unique_lock lock(mtx);
 
