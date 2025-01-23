@@ -40,9 +40,7 @@ namespace cache
     void cache::add_cache(const std::string &uri, const char *buf,
                           std::size_t size)
     {
-        // glibc 似乎不支持 C++ 20 的 std::make_shared<T[]>() （悲
-        std::shared_ptr<char[]> ptr{new char[size],
-                                    [](char *p) { delete[] p; }};
+        auto ptr{std::make_shared<char[]>(size)};
         std::memcpy(ptr.get(), buf, size);
         std::unique_lock lock(mtx);
 
