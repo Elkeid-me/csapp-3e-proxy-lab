@@ -13,7 +13,7 @@
 -- GNU General Public License for more details.
 --
 -- You should have received a copy of the GNU General Public License
--- along with Proxy Lab.  If not, see <http://www.gnu.org/licenses/>--
+-- along with Proxy Lab.  If not, see <http://www.gnu.org/licenses/>
 
 add_rules("plugin.compile_commands.autoupdate")
 set_languages("cxx20")
